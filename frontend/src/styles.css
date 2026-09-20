@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #f5f6f8; color: #202938; font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 1000px; margin: 36px auto; padding: 0 20px; }
+section { background: white; border: 1px solid #d9dee5; border-radius: 8px; padding: 22px; margin: 20px 0; }
+h1, h2, h3 { line-height: 1.25; }
+h2 { margin-top: 0; }
+input, select, button { font: inherit; padding: 8px 12px; border: 1px solid #aeb8c5; border-radius: 5px; max-width: 100%; }
+button { background: #2356a8; color: white; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+a { color: #2356a8; }
+.error { color: #a51d2d; }
+.results { padding: 0; list-style: none; max-height: 360px; overflow: auto; }
+.results li { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid #e3e7ee; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; }
+th, td { padding: 10px; border-bottom: 1px solid #e3e7ee; vertical-align: top; }
+th { background: #f0f3f7; }
+td:last-child { overflow-wrap: anywhere; }
+@media (max-width: 600px) { input, select { display: block; width: 100%; margin: 8px 0; } section { padding: 16px; } }
+
+.header { display:flex; justify-content:space-between; gap:24px; align-items:center; }
+.header p { margin:8px 0; }
+.eyebrow { font-size:12px; font-weight:700; letter-spacing:.12em; color:#66748b; }
+.muted { color:#657286; font-size:14px; }
+.secondary { background:#fff; color:#2356a8; border-color:#2356a8; }
+.product-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+.product-card { display:flex; flex-direction:column; gap:8px; text-align:left; color:#202938; background:#f8faff; border:1px solid #d5dce9; padding:16px; min-height:112px; }
+.product-card:hover,.product-card.selected { border-color:#2356a8; background:#eaf1ff; }
+.product-card strong { line-height:1.25; }
+.alerts { list-style:none; padding:0; }
+.alerts li { padding:12px; margin:8px 0; background:#f4f8ff; border-left:3px solid #2356a8; }
+@media(max-width:600px) { .header { flex-direction:column; align-items:stretch; } }
