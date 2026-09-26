@@ -16,13 +16,13 @@ async function loadCatalogue() {
       let data;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const response = await fetch(`${env.storeBaseUrl}/api/catalog?page=${pageNumber}&pageSize=60`, {
+          const response = await fetch(`${env.storeBaseUrl}/api/v2/listings?page=${pageNumber}&limit=60`, {
             signal: AbortSignal.timeout(env.scrapeNavTimeoutMs)
           });
           if (!response.ok) throw new Error(`Catalogue HTTP ${response.status}`);
           data = await response.json();
-          if (!Array.isArray(data.items) || !Number.isInteger(data.total) ||
-              !Number.isInteger(data.pages) || data.total < 1 || data.pages < 1) {
+          if (!Array.isArray(data.results) || !Number.isInteger(data.count) ||
+              !Number.isInteger(data.totalPages) || data.count < 1 || data.totalPages < 1) {
             throw new Error("Invalid catalogue response");
           }
           break;
@@ -31,17 +31,17 @@ async function loadCatalogue() {
           await sleep(attempt * 700);
         }
       }
-      pageCount = data.pages;
-      for (const item of data.items) {
+      pageCount = data.totalPages;
+      for (const item of data.results) {
         if (!Number.isInteger(item.id) || item.id < 1 || !item.name?.trim()) {
           throw new Error("Invalid catalogue item");
         }
         products.set(item.id, {
           name: item.name.trim(),
-          url: `${env.storeBaseUrl}/product/${item.id}`
+          url: `${env.storeBaseUrl}/item/${item.id}`
         });
       }
-      if (products.size === data.total) return [...products.values()];
+      if (products.size === data.count) return [...products.values()];
     }
   }
   throw new Error("The store's catalogue was incomplete. Please search again.");
@@ -90,77 +90,65 @@ export function parsePrice(text) {
   return { price, currency: currencies[match[1].toUpperCase()] };
 }
 
-async function dismissCookies(page) {
-  const dialog = page.getByRole("dialog", { name: "Cookie consent" });
-  if (!await dialog.isVisible()) return;
-  const decline = dialog.getByRole("button", { name: "Decline cookies" });
-  for (let attempt = 0; attempt < 4 && await dialog.isVisible(); attempt++) {
-    await decline.click();
-  }
-  if (await dialog.isVisible()) throw new Error("Cookie dialog could not be dismissed");
-}
-
-async function revealPrice(page) {
-  const block = page.locator(".price-block");
-  await block.waitFor({ state: "visible" });
-  await dismissCookies(page);
-  // The mock store disables Reveal until the mouse moves over the price area.
-  // A single hover does not meet its observed 8-move / 600-ms requirement.
-  await block.hover();
-  const box = await block.boundingBox();
-  if (!box) throw new Error("Price area is not visible");
-  for (let step = 0; step < 12; step++) {
-    await page.mouse.move(box.x + 15 + step * Math.min(8, (box.width - 30) / 12), box.y + 20);
-    await sleep(90);
-  }
-
-  const reveal = page.getByRole("button", { name: "Reveal price", exact: true });
-  // Some clicks are ignored. Try up to three times while the button is visible.
-  for (let click = 0; click < 3 && await reveal.isVisible(); click++) {
-    await dismissCookies(page);
-    await reveal.click();
-    await sleep(1200);
-  }
-
-  // Refresh if the store reports that its price is still updating.
-  for (let refresh = 0; refresh < 3; refresh++) {
-    await page.locator(".price-success, .price-error").waitFor({ state: "visible" });
-    if (await page.locator(".price-error").isVisible()) {
-      throw new Error((await block.innerText()).slice(0, 500));
-    }
-    if (!(await block.innerText()).includes("Updating…")) return;
-    if (refresh === 2) throw new Error("Price is still updating");
-    await page.getByRole("button", { name: "Refresh price", exact: true }).click();
-    await sleep(1200);
-  }
-}
-
 async function readProduct(page, url) {
   page.setDefaultTimeout(env.scrapeNavTimeoutMs);
-  const response = await page.goto(url, {
-    waitUntil: "domcontentloaded", timeout: env.scrapeNavTimeoutMs
-  });
+
+  // The store gives its price elements random class names that change over time.
+  // The page downloads today's names from /api/v2/ui/manifest, so we read that same file.
+  const manifestResponse = page.waitForResponse((res) => res.url().includes("/api/v2/ui/manifest"));
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: env.scrapeNavTimeoutMs });
   if (!response || !response.ok()) {
     throw new Error(`Product page HTTP ${response?.status() ?? "no response"}`);
   }
-  await dismissCookies(page);
-  await page.locator(".price-block, .detail .grid-error").waitFor({ state: "visible" });
-  const pageError = page.locator(".detail .grid-error");
-  if (await pageError.isVisible()) throw new Error(await pageError.innerText());
+  const { classes } = await (await manifestResponse).json();
 
-  await revealPrice(page);
-  // Do NOT read the hidden decoy, struck-out MRP, or promotional deal text.
-  const sellingPrice = page.locator('.price-main > [style*="font-size"]:visible');
-  if (await sellingPrice.count() !== 1) throw new Error("Selling price is missing or ambiguous");
-  const name = (await page.locator(".detail-info h1").innerText()).trim();
-  const stockClass = await page.locator(".price-facets .stock-badge").getAttribute("class");
-  if (!name || !/\b(in-stock|out-stock)\b/.test(stockClass || "")) {
+  // The cookie pop-up can appear at any time and blocks clicks.
+  // Playwright closes it automatically whenever it gets in the way.
+  await page.addLocatorHandler(page.getByRole("dialog", { name: "Privacy preferences" }), async (dialog) => {
+    await dialog.getByRole("button", { name: "Reject cookies" }).click();
+  });
+
+  const name = (await page.locator("h1").first().innerText()).trim();
+
+  // Some products have options (pack size, kit...) and the store picks one at random.
+  // Always choose the first option so every scrape records the same variant.
+  const firstOption = page.locator(".opt-chip").first();
+  if (await firstOption.count()) await firstOption.click();
+
+  // "Check today's price" stays disabled until the mouse has moved over the price area
+  // for a while (the store wants at least 8 moves and 600 ms). If the cookie pop-up opens
+  // in the middle, the moves or the click get lost, so we try the whole step up to 3 times.
+  const priceArea = page.locator(`.${classes.priceWrap}`);
+  const checkButton = page.getByRole("button", { name: "Check today’s price" });
+  for (let tryNo = 0; tryNo < 3 && await checkButton.isVisible(); tryNo++) {
+    await priceArea.hover(); // a Playwright action, so the cookie pop-up is closed first
+    const box = await priceArea.boundingBox();
+    for (let step = 0; step < 12; step++) {
+      await page.mouse.move(box.x + 20 + step * 10, box.y + box.height / 2);
+      await sleep(90);
+    }
+    if (await checkButton.isEnabled()) await checkButton.click();
+    await sleep(1500);
+  }
+  if (await checkButton.isVisible()) throw new Error("Price did not unlock");
+
+  // Wait for either the price or the store's own error message.
+  const priceValue = page.locator(`.${classes.priceValue}`);
+  const retryButton = page.getByRole("button", { name: "Retry", exact: true });
+  await priceValue.or(retryButton).first().waitFor();
+  if (await retryButton.isVisible()) throw new Error("The store could not load the price");
+  if (await page.getByText("Refreshing prices").isVisible()) throw new Error("Price is still refreshing");
+
+  // Do NOT read the hidden decoy prices or the struck-out MRP: only the element the manifest names.
+  if (await priceValue.count() !== 1) throw new Error("Selling price is missing or ambiguous");
+  const stockClass = await page.locator(".avail-pill").getAttribute("class");
+  if (!name || !/\bavail-(yes|no)\b/.test(stockClass || "")) {
     throw new Error("Missing product name or stock state");
   }
   return {
     name,
-    ...parsePrice(await sellingPrice.textContent()),
-    inStock: stockClass.split(" ").includes("in-stock")
+    ...parsePrice(await priceValue.innerText()),
+    inStock: stockClass.includes("avail-yes")
   };
 }
 
@@ -180,7 +168,7 @@ export async function scrapeProduct(productUrl, { headed = false, simulateFirstF
         page = await browser.newPage();
         if (simulateFirstFailure && attempt === 1) {
           // Headed demo only: label this injected 503 in the recording.
-          await page.route("**/api/product/*", (route) => route.fulfill({ status: 503, body: "Demo temporary failure" }));
+          await page.route("**/api/v2/items/*/quote*", (route) => route.fulfill({ status: 503, body: "Demo temporary failure" }));
         }
         data = await readProduct(page, url);
       } catch (error) {
