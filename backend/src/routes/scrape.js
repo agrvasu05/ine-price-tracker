@@ -4,33 +4,30 @@ import { runScheduledScrapes } from "../services/scrapeRunner.js";
 
 const router = Router();
 
-router.post("/run", async (req, res) => {
+// Called by the scheduler every two hours.
+// A full batch takes a few minutes (Playwright + retries), but schedulers such as
+// cron-job.org give up after ~30 seconds. So we reply immediately with 202 and let
+// the batch keep running in the background. Results are still saved to Supabase
+// (scrape_logs / price_history), so nothing is lost by not waiting.
+router.post("/run", (req, res) => {
   const suppliedSecret = req.get("x-cron-secret");
 
   if (!suppliedSecret || suppliedSecret !== env.cronSecret) {
-    return res.status(401).json({
-      error: "Unauthorized cron request"
-    });
+    return res.status(401).json({ error: "Unauthorized cron request" });
   }
 
-  try {
-    // Run the scheduled scraper and wait for it to finish.
-    await runScheduledScrapes();
+  runScheduledScrapes()
+    .then((summary) => {
+      if (summary?.skipped) {
+        console.log(`Scheduled scrape skipped: ${summary.reason}`);
+      } else {
+        const failed = (summary?.results || []).filter((r) => !r.ok).length;
+        console.log(`Scheduled scrape finished: ${summary?.checked ?? 0} products, ${failed} failed`);
+      }
+    })
+    .catch((error) => console.error("Scheduled scrape error:", error));
 
-    // Cron-job.org only needs a small response.
-    return res.status(200).json({
-      ok: true,
-      message: "Scrape run finished"
-    });
-  } catch (error) {
-    console.error("Scheduled scrape error:", error);
-
-    // Keep error responses small too.
-    return res.status(500).json({
-      ok: false,
-      message: "Scheduled scrape failed"
-    });
-  }
+  return res.status(202).json({ ok: true, message: "Scrape run started" });
 });
 
 export default router;
