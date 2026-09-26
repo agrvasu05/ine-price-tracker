@@ -3,7 +3,7 @@ import { searchStore, scrapeProduct } from "../services/storeScraper.js";
 import { closeSharedBrowser } from "../services/browser.js";
 
 try {
-  const partial = await searchStore("Ironwood Curved Monitor");
+  const partial = await searchStore("Range Extender");
   assert(partial.length > 0, "Partial-name search must find products");
   const full = await searchStore(partial[0].name);
   assert(full.some((product) => product.url === partial[0].url), "Full-name search must find the same product");
