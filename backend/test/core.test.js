@@ -14,6 +14,6 @@ test("does not guess a price from unrelated text", () => {
   for (const value of ["", "20% off", "4.2 stars", "Loading…", "Deal price ₹120", "₹-10", "₹10 and ₹20", "NaN", "₹1,,234", "₹1,2,3"]) assert.throws(() => parsePrice(value));
 });
 test("accepts only INE product URLs", () => {
-  assert.equal(normalizeAndValidateStoreUrl("/product/831"), "https://demo.inelabteamdev.com/product/831");
-  for (const value of [undefined, "", "/", "/api/catalog", "https://example.com/product/1", "http://demo.inelabteamdev.com/product/1", "https://user:pass@demo.inelabteamdev.com/product/1"]) assert.throws(() => normalizeAndValidateStoreUrl(value));
+  assert.equal(normalizeAndValidateStoreUrl("/item/2831"), "https://demo.inelabteamdev.com/item/2831");
+  for (const value of [undefined, "", "/", "/product/831", "/api/v2/listings", "https://example.com/item/1", "http://demo.inelabteamdev.com/item/1", "https://user:pass@demo.inelabteamdev.com/item/1"]) assert.throws(() => normalizeAndValidateStoreUrl(value));
 });
